@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "backup.py",
             "cwd": "${workspaceFolder}",
-            //"args": ["-c", "config.json"],
+            "args": ["-c", "backup_config.json"],
             "console": "integratedTerminal",
             "justMyCode": true
         }

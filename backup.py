@@ -13,13 +13,13 @@ import argparse
 if __name__ == "__main__":
     
     # parse command line arguments
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='Fast backup files to archive with encryption, deduplication, and compression.')
     # config file by -c
-    parser.add_argument('-c', '--config', type=str, help='config file')
+    parser.add_argument('-c', '--config', type=str, default='backup_config.json', help='config file')
 
     # do backup by default, can also do restore and cleanup_soft, cleanup_hard
     # specify by --action -a
-    parser.add_argument('-a', '--action', type=str, default='backup', help='action to perform, one of [backup, restore, cleanup_soft, cleanup_hard]')
+    parser.add_argument('-a', '--action', type=str, default='backup', help='action to perform', choices=['backup', 'restore', 'cleanup_soft', 'cleanup_hard', 'info'])
 
 
     args = parser.parse_args()
@@ -51,6 +51,9 @@ if __name__ == "__main__":
         print('Will delete historical archive file entries completely. Continue? y/n')
         if input() == 'y':
             archiver.cleanup_delete_all_history()
+    elif args.action == 'info':
+        archiver.info(True)
+    
 
 
 
