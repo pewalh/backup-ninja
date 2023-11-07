@@ -20,7 +20,7 @@ def run_backup(src_dir, table_dir, file_dir, key_dir):
 
     archiver.backup(src_dir, full=True, hard_remove=False)
 
-    #archiver.restore(src_dir / 'restore')
+    archiver.restore('D:/tmp/_restore')
 
 
 # Call main function

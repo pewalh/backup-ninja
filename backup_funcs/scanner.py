@@ -8,8 +8,8 @@ from functools import partial
 
 class Scanner():
     def __init__(self, n_procs=None, n_threads_per_proc=None):
-        self.n_procs = os.cpu_count() // 2 if n_procs is None else n_procs
-        self.n_threads_per_proc = 4 if n_threads_per_proc is None else n_threads_per_proc
+        self.n_procs = max(1, os.cpu_count() // 2 if n_procs is None else n_procs)
+        self.n_threads_per_proc = max(1, 4 if n_threads_per_proc is None else n_threads_per_proc)
         self.files = []
 
 
@@ -30,25 +30,22 @@ class Scanner():
         jagged_fpaths.append(fpaths[(self.n_procs-1)*n_paths_per_proc:])
         
         
-        _create_file_entries = partial(create_file_entries, n_threads=self.n_threads_per_proc, with_checksum=with_checksum)
-        f_entries = []
-        if self.n_procs <= 1:
-            f_entries = map(_create_file_entries, jagged_fpaths)
-        else:
-            with Pool(self.n_procs) as pool:
-                f_entries = pool.map(_create_file_entries, jagged_fpaths)
+        _p_create_file_entries = partial(_create_file_entries, n_threads=self.n_threads_per_proc, with_checksum=with_checksum)
+        finfos = []
+        with Pool(self.n_procs) as pool:
+            finfos = pool.map(_p_create_file_entries, jagged_fpaths)
         # flatten list of lists
-        f_entries = [item for sublist in f_entries for item in sublist]
-        return f_entries
+        finfos = [item for sublist in finfos for item in sublist]
+        return finfos
         
 
 
-def create_file_entry(path, with_checksum=True):
+def _create_file_entry(path, with_checksum=True):
     return FileInfo(path, calculate_checksum=with_checksum)
 
-def create_file_entries(paths, n_threads=4, with_checksum=True):
+def _create_file_entries(paths, n_threads=4, with_checksum=True):
     entries = []
-    _create_file_entry = partial(create_file_entry, with_checksum=with_checksum)
+    _p_create_file_entry = partial(_create_file_entry, with_checksum=with_checksum)
     with ThreadPool(n_threads) as pool:
-        entries.extend(pool.map(_create_file_entry, paths))
+        entries.extend(pool.map(_p_create_file_entry, paths))
     return entries

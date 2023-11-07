@@ -9,7 +9,7 @@ import shutil
 from pydantic import BaseModel
 
 from .file_info import FileInfo
-from .crypto import Crypto
+from .crypto import ConcurrentEncryptor
 from .scanner import Scanner
 from .logger import Logger
 from .misc import pretty_size, pretty_time
@@ -72,7 +72,7 @@ class Archive():
         if not table_dir.exists():
             os.makedirs(table_dir)
 
-        self.crypto = Crypto(key)
+        self.crypto = ConcurrentEncryptor(key=key)
         self.active = {} # checksum : ArchiveEntry
         self.active_ino = {} # ino : checksum - indexed for fast lookup
         self.removed = {} # checksum : ArchiveEntry
@@ -136,27 +136,6 @@ class Archive():
 
     def _archived_fpath(self, checksum):
         return self.file_dir / checksum[:2] / (checksum+'.enc')
-
-
-    def _restore_file(self, checksum, restore_base_path):
-        arch_path = self._archived_fpath(checksum)
-        restore_paths = []
-        for fptr in self.active[checksum].fptrs:
-            restore_path = Path(fptr.path)
-            restore_path = Path(restore_base_path) / restore_path.absolute().as_posix().replace(':','_')
-            restore_paths.append(restore_path)
-        for dst_path in restore_paths:
-            if not dst_path.parent.exists():
-                os.makedirs(dst_path.parent)
-            self.crypto.restore_file(arch_path, dst_path)
-        return len(restore_paths)
-
-    def _store_file(self, path, checksum):
-        arch_path = self._archived_fpath(checksum)
-        if not arch_path.parent.exists():
-            os.makedirs(arch_path.parent)
-        self.crypto.store_file(path, arch_path)
-    
 
 
 
@@ -234,6 +213,7 @@ class Archive():
                 # ino index does not need to be updated since we have not changed the file
 
         # add new files
+        files_to_store = {} # checksum : entry
         for checksum, finfos in scanned_chck2finfo.items():
             if checksum in self.active:
                 if self._check_archive_file(checksum, self.active[checksum].arch_size):
@@ -246,7 +226,26 @@ class Archive():
             for finfo in finfos:
                 entry.fptrs.append(ArchiveFilePointer(path=finfo.path.as_posix(), ino=finfo.ino, mtime=finfo.mtime, size=finfo.size))
                 entry.log.append(ArchiveLogEvent.from_event(BlobEvent.ADDED, finfo.path))
-            self._store_file(finfos[0].path, checksum)
+            
+            files_to_store[checksum] = entry
+
+        # store new files
+        logger.info(f'Storing {len(files_to_store)} new archive files...')
+
+        # prepare folders and srcdst_path_pairs
+        srcdst_path_pairs = []
+        for checksum, entry in files_to_store.items():
+            arch_path = self._archived_fpath(checksum)
+            src_path = entry.fptrs[0].path
+            srcdst_path_pairs.append((src_path, arch_path))
+            if not arch_path.parent.exists():
+                os.makedirs(arch_path.parent)
+
+        # store files
+        self.crypto.store_files(srcdst_path_pairs)
+        
+        # update archive table
+        for checksum, entry in files_to_store.items():
             entry.arch_size = self._archived_fpath(checksum).stat().st_size
             self.active[checksum] = entry
             for finfo in finfos:
@@ -317,13 +316,29 @@ class Archive():
         # TODO remove old deleted files - keep some history
         pass
 
+
     def restore(self, restore_base_path):
         logger.info(f'Restoring all files into: {restore_base_path}')
-        n_restored = 0
-        for entry in self.active.values():
-            n_restored += self._restore_file(entry.checksum, restore_base_path)
+
+        # prepare folders and srcdst_path_pairs
+        srcdst_path_pairs = []
+        for checksum, entry in self.active.items():
+            arch_path = self._archived_fpath(checksum)
+            for fptr in entry.fptrs:
+                dst_path = Path(fptr.path)
+                dst_path = Path(restore_base_path) / dst_path.absolute().as_posix().replace(':','_')
+                srcdst_path_pairs.append((arch_path, dst_path))
+                if not dst_path.parent.exists():
+                    os.makedirs(dst_path.parent)
+        
+        logger.info(f'Restoring {len(srcdst_path_pairs)} files...')
+        
+        # restore files
+        self.crypto.restore_files(srcdst_path_pairs)
+
         total_size = sum([fptr.size for entry in self.active.values() for fptr in entry.fptrs])
-        logger.info(f'Restored {n_restored} files, {pretty_size(total_size)}.')
+        logger.info(f'Restored {len(srcdst_path_pairs)} files, {pretty_size(total_size)}.')
+
 
     def info(self, log=False) -> dict:
         info = {}
