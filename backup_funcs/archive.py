@@ -31,7 +31,7 @@ class ArchiveLogEvent(BaseModel):
     path:Optional[str]
 
     @classmethod
-    def from_event(cls, event:BlobEvent, path:Optional[str]=None):
+    def from_event(cls, event:BlobEvent, path:str):
         ts = dt.datetime.now().astimezone().isoformat()
         return cls(timestamp=ts, event=event.name, path=Path(path).as_posix() if path is not None else None)
 
@@ -76,7 +76,7 @@ class Archive():
         self.active = {} # checksum : ArchiveEntry
         self.active_ino = {} # ino : checksum - indexed for fast lookup
         self.history = {} # checksum : ArchiveEntry
-
+        self.backup_roots = [] # list of root paths to backup
         
         self._load_archive_table()
 
@@ -90,11 +90,12 @@ class Archive():
         with open(archive_path, 'r') as fin:
             archive = json.load(fin)
         
-        if not ('active' in archive and 'history' in archive):
+        if not ('active' in archive and 'history' in archive and 'backup_roots' in archive):
             return False
         
         _active = [ArchiveEntry(**entry) for entry in archive['active']]
         _history = [ArchiveEntry(**entry) for entry in archive['history']]
+        self.backup_roots = [Path(root) for root in archive['backup_roots']]
         self.active = {entry.checksum: entry for entry in _active}
         self.history = {entry.checksum: entry for entry in _history}
         self.active_ino = {fptr.ino: entry.checksum for entry in _active for fptr in entry.fptrs}
@@ -105,7 +106,8 @@ class Archive():
         # checksum is in the entry so no need to store it twice
         f_table = {
             'active':  [entry.model_dump() for entry in self.active.values()],
-            'history': [entry.model_dump() for entry in self.history.values()]
+            'history': [entry.model_dump() for entry in self.history.values()],
+            'backup_roots': [root.as_posix() for root in self.backup_roots],
         }
         archive_path = self.table_dir / 'archive.json'
         backup_path = self.table_dir / 'archive.json.bak'
@@ -273,15 +275,38 @@ class Archive():
         return None
     
 
-    def backup(self, src_dir, full=True, hard_remove=False):
+    def backup(self, backup_roots, full=True, hard_remove=False):
         t0 = time.time()
         if full:
             logger.info('Scanning directory tree and calculating checksums... (might take a while)')
         else:
             logger.info('Scanning directory tree without calculating checksums...')
 
+        backup_roots = [Path(root) for root in backup_roots]
+        # check if any root has been removed
+        removed_roots = [root for root in self.backup_roots if root not in backup_roots]
+        if len(removed_roots) > 0:
+            for root in removed_roots:
+                logger.warning(f'Backup root removed: {root}')
+            # prompt user to continue
+            print('Backup roots have been removed. Continue backup? (y/n)')
+            answer = input()
+            if answer.lower() != 'y':
+                logger.info('Backup aborted by user.')
+                return None
+        added_roots = [root for root in backup_roots if root not in self.backup_roots]
+        for root in added_roots:
+            logger.info(f'Backup root added: {root}')
+
+        kept_roots = [root for root in backup_roots if root in self.backup_roots]
+        for root in kept_roots:
+            logger.info(f'Backup root kept since last backup: {root}')
+
+        self.backup_roots = backup_roots
+
         scanner = Scanner()
-        scanner.scan_directory_tree(src_dir, with_checksum=full)
+        for root in self.backup_roots:
+            scanner.scan_directory_tree(root, with_checksum=full)
         total_size = sum([finfo.size for finfo in scanner.files])
         logger.info(f'Scanned {len(scanner.files)} files with total size {pretty_size(total_size)}.')
 
@@ -314,9 +339,52 @@ class Archive():
         return self.info(log=True)
 
 
-    def cleanup(self):
-        # TODO remove old deleted files - keep some history
-        pass
+
+    def cleanup_delete_all_history(self):
+        logger.info(f'Removing all files from archive history...')
+        removed_size = sum([self.history[checksum].arch_size for checksum in self.history.keys()])
+        to_remove = list(self.history.keys())
+        for checksum in to_remove:
+            self.history.pop(checksum)
+            self._remove_file(checksum)
+        
+        self._store_archive_table()
+        logger.info(f'Removed all files from history ({pretty_size(removed_size)}).')
+        return self.info(log=True)
+    
+
+    def cleanup_keep_latest_per_path_each_year(self):
+        # save last entry each year for each path
+        # group checkusums by path
+        path2checksums = {}
+        for checksum, entry in self.history.items():
+            for log in entry.log:
+                path2checksums.setdefault(log.path, set()).add(checksum)
+        
+        
+        to_keep = []
+        for _, checksums in path2checksums.items():
+            # keep latest entry for each year for each path
+            curr_year = dt.datetime.now().year
+            checksum2ts = { checksum: dt.datetime.fromisoformat(log.timestamp) for checksum in checksums for log in self.history[checksum].log  }
+            for year in range(curr_year, 2000, -1):
+                ts_in_year = [ts for ts in checksum2ts.values() if ts.year == year]
+                if len(ts_in_year) == 0:
+                    continue
+                latest_ts = max(ts_in_year)
+                latest_checksum = [checksum for checksum, ts in checksum2ts.items() if ts.year == year and ts == latest_ts][0]
+                to_keep.append(latest_checksum)
+
+        to_remove = [checksum for checksum in self.history.keys() if checksum not in to_keep]
+        logger.info(f'Removing {len(to_remove)} files from archive history...')
+        removed_size = sum([self.history[checksum].arch_size for checksum in to_remove])
+        for checksum in to_remove:
+            self.history.pop(checksum)
+            self._remove_file(checksum)
+        
+        self._store_archive_table()
+        logger.info(f'Removed {len(to_remove)} files from history ({pretty_size(removed_size)}). Kept {len(to_keep)} files in history.')
+        return self.info(log=True)
 
 
     def restore(self, restore_base_path):

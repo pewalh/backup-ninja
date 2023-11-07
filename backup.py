@@ -10,7 +10,7 @@ logging.basicConfig(format='%(levelname)s %(asctime)s: %(message)s', datefmt='%Y
 
 
 # Main function
-def run_backup(src_dir, table_dir, file_dir, key_dir):
+def run_backup(backup_roots, table_dir, file_dir, key_dir):
     
     with open(key_dir, 'rb') as f:
         key = f.read()
@@ -18,18 +18,19 @@ def run_backup(src_dir, table_dir, file_dir, key_dir):
     key = None
 
 
-    archiver.backup(src_dir, full=True, hard_remove=False)
-
-    archiver.restore('D:/tmp/_restore')
-
+    archiver.backup(backup_roots, full=True, hard_remove=False)
+    
+    #archiver.restore('D:/tmp/_restore')
+    #archiver.cleanup_keep_latest_per_path_each_year()
+    #archiver.cleanup_delete_all_history()
 
 # Call main function
 if __name__ == "__main__":
     
     # parse command line arguments
     #src_dir = Path('C:/Users/Peter/OneDrive - Walhagen Engineering AB/BACKUP-KAMERA/')
-    #src_dir = Path('D:/sandbox')
-    src_dir = Path('C:/Users/Peter/OneDrive/Documents')
+    backup_roots = [Path('D:/tmp')]
+    #src_dir = Path('C:/Users/Peter/OneDrive/Documents')
 
 
     table_dir = Path('C:/Users/Peter/OneDrive - Walhagen Engineering AB/_BACKUP/')
@@ -37,7 +38,7 @@ if __name__ == "__main__":
     key_dir = Path('~/.backup/.key').expanduser()
 
 
-    run_backup(src_dir, table_dir, file_dir, key_dir)
+    run_backup(backup_roots, table_dir, file_dir, key_dir)
 
 
 
