@@ -108,6 +108,7 @@ class Crypto:
             chunk = in_file_obj.read(chunk_size)
             if not chunk:
                 break
+            chunk = gzip.compress(chunk)
             chunk = self.fernet.encrypt(chunk)
             out_file_obj.write(struct.pack('<I', len(chunk)))  # little endian unsigned integer
             out_file_obj.write(chunk)
@@ -123,5 +124,6 @@ class Crypto:
             chunkSize = struct.unpack('<I', chunk_size_bytes)[0]
             chunk = in_file_obj.read(chunkSize)
             dec = self.fernet.decrypt(chunk)
+            dec = gzip.decompress(dec)
             out_file_obj.write(dec)
         

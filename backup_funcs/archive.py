@@ -75,7 +75,7 @@ class Archive():
         self.crypto = ConcurrentEncryptor(key=key)
         self.active = {} # checksum : ArchiveEntry
         self.active_ino = {} # ino : checksum - indexed for fast lookup
-        self.removed = {} # checksum : ArchiveEntry
+        self.history = {} # checksum : ArchiveEntry
 
         
         self._load_archive_table()
@@ -90,13 +90,13 @@ class Archive():
         with open(archive_path, 'r') as fin:
             archive = json.load(fin)
         
-        if not ('active' in archive and 'removed' in archive):
+        if not ('active' in archive and 'history' in archive):
             return False
         
         _active = [ArchiveEntry(**entry) for entry in archive['active']]
-        _removed = [ArchiveEntry(**entry) for entry in archive['removed']]
+        _history = [ArchiveEntry(**entry) for entry in archive['history']]
         self.active = {entry.checksum: entry for entry in _active}
-        self.removed = {entry.checksum: entry for entry in _removed}
+        self.history = {entry.checksum: entry for entry in _history}
         self.active_ino = {fptr.ino: entry.checksum for entry in _active for fptr in entry.fptrs}
         return True
     
@@ -105,7 +105,7 @@ class Archive():
         # checksum is in the entry so no need to store it twice
         f_table = {
             'active':  [entry.model_dump() for entry in self.active.values()],
-            'removed': [entry.model_dump() for entry in self.removed.values()]
+            'history': [entry.model_dump() for entry in self.history.values()]
         }
         archive_path = self.table_dir / 'archive.json'
         backup_path = self.table_dir / 'archive.json.bak'
@@ -170,15 +170,17 @@ class Archive():
         n_path_change = 0
 
         # update existing table - remove and move
-        for entry in self.active.values():
+        actve_chksums = list(self.active.keys())
+        for checksum in actve_chksums:
+            entry = self.active[checksum]
             if entry.checksum not in scanned_chck2finfo:
                 
-                # add file to removed and remove from active and active_ino
+                # add file to history and remove from active and active_ino
                 for fptr in entry.fptrs:
-                    entry.log.append(ArchiveLogEvent.from_event(BlobEvent.REMOVED, fptr.path.as_posix()))
+                    entry.log.append(ArchiveLogEvent.from_event(BlobEvent.REMOVED, fptr.path))
                 entry.fptrs = []
                 self.active.pop(entry.checksum)
-                self.removed[entry.checksum] = entry
+                self.history[entry.checksum] = entry
                 for fptr in entry.fptrs:
                     self.active_ino.pop(fptr.ino)
                 if hard_remove:
@@ -343,10 +345,12 @@ class Archive():
     def info(self, log=False) -> dict:
         info = {}
         info['n_active'] = len(self.active)
-        info['n_removed'] = len(self.removed)
-        info['active_size'] = sum([entry.fptrs[0].size for entry in self.active.values()])
-        info['removed_size'] = sum([entry.fptrs[0].size for entry in self.removed.values()])
+        info['n_history'] = len(self.history)
+        info['restore_size'] = sum([entry.fptrs[0].size for entry in self.active.values()])
+        info['archive_size_active'] = sum([entry.arch_size for entry in self.active.values()])
+        info['archive_size_history'] = sum([entry.arch_size for entry in self.history.values()])
         if log:
-            logger.info(f"Archive-active: {info['n_active']} files, {pretty_size(info['active_size'])}. Archive-removed: {info['n_removed']} files, {pretty_size(info['removed_size'])}.")
-
+            logger.info(f"Archive-active: {info['n_active']} files, size for restore: {pretty_size(info['restore_size'])}. Size in archive: {pretty_size(info['archive_size_active'])}")
+            logger.info(f"Archive-history: {info['n_history']} files. Size in archive: {pretty_size(info['archive_size_history'])}")
+            
         return info

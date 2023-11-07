@@ -28,7 +28,9 @@ if __name__ == "__main__":
     
     # parse command line arguments
     #src_dir = Path('C:/Users/Peter/OneDrive - Walhagen Engineering AB/BACKUP-KAMERA/')
-    src_dir = Path('D:/sandbox')
+    #src_dir = Path('D:/sandbox')
+    src_dir = Path('C:/Users/Peter/OneDrive/Documents')
+
 
     table_dir = Path('C:/Users/Peter/OneDrive - Walhagen Engineering AB/_BACKUP/')
     file_dir = Path('C:/Users/Peter/OneDrive - Walhagen Engineering AB/_BACKUP/files')
