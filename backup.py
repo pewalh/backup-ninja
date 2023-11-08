@@ -21,6 +21,10 @@ if __name__ == "__main__":
     # specify by --action -a
     parser.add_argument('-a', '--action', type=str, default='backup', help='action to perform', choices=['backup', 'restore', 'cleanup_soft', 'cleanup_hard', 'info'])
 
+    # set a flag to do hard remove, default it is false
+    # specify by --hard_remove -r
+    parser.add_argument('-r', '--hard_remove', action='store_true', help='delete inactive versions immediately instead of moving to history')
+
 
     args = parser.parse_args()
     config_file = Path(args.config)
@@ -33,7 +37,7 @@ if __name__ == "__main__":
     key_path = Path(os.path.expandvars(config['key_path'])).expanduser()
     restore_dir = Path(os.path.expandvars(config['restore_dir'])).expanduser()
     backup_roots = [Path(os.path.expandvars(root)).expanduser() for root in config['backup_roots']]
-    hard_remove = config['hard_remove']
+    hard_remove = args.hard_remove
 
     with open(key_path, 'rb') as f:
         key = f.read()

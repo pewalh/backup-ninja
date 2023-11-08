@@ -9,7 +9,6 @@ Needs a config file (default "backup_config.json") with the following content:
     "table_dir": "<path-to-where-you-want-to-put-the-backup-filesystem-tables>",
     "file_dir": "<path-to-where-you-want-to-put-the-encrypted-backup-files>",
     "key_path": "<path-to-encryption-key>",
-    "hard_remove": <bool>,
     "restore_dir": "<path-to-restore-dir>",
     "backup_roots": [
         "<src-path-to-backup-1>",
@@ -18,15 +17,16 @@ Needs a config file (default "backup_config.json") with the following content:
     ]
 }
 ```
-The key file shall contain a 32 bit key. You can generate it with e.g. 
+The key file shall contain a 32 byte key. You can generate it with e.g. 
 ```
-from cryptography.fernet import Fernet
-key = Fernet.generate_key()
+import base64
+import os
+key = base64.urlsafe_b64encode(os.urandom(32))
 with open(key_path, 'wb') as f:
     f.write(key)
 ```
 Keep this key safe. If you loose it you can't restore the backup.
-(Don't keep the file together with the backup archive, or you loose the purpose of the encryption)
+(Store the key file at a different storage ideally, i.e. if you upload the files to cloud, store the key at another cloud storage or locally etc.)
 
 As the backup archive is encrypted locally (and the key is kept separate from the archive) the files can be uploaded to cloud backup without any easy way of breaking in to the files.
 
@@ -39,6 +39,11 @@ When restoring - all data is decrypted and decompressed and put under `restore_p
 There is code for a soft backup which can run a lot faster and that compares file path, modification time, file id and file size instead of calculating the checksum to see if a file is already in the backup. Files that are to be added will always have their checksum calculated. This soft backup is not tested well and may not be necessary as the full backup runs quite fast anyway.
 
 The io intensive tasks run on cpu_count // 2 processes (as many processors have hyperthreading which might not be easily utilized) and 4 threads per processor. This has empirically been a sweet spot for setting all cores to work while parallellising io actions.
+
+Only one copy of identical files are kept. If the file has multiple paths they are stored as metadata and the file will be duplicated again if restoring. 
+
+The files are compressed, encrypted, and then compressed again. This takes a while but offers smallest storage footprint. The reason for the double compression is that the encryption adds entropy, thus the first compression. Also the encryption adds systematic overhead which can be compressed, thus the second compression. For already compressed data formats as images (png, jpeg) the first compression does not add any benefit, but it does for documents. The second compression can reduce size to ~75%.
+
 
 run `python backup.py -h` for help with running the script.
 
